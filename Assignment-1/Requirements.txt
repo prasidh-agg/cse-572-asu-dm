@@ -1,0 +1,19 @@
+Python Library Requirements: 
+- pandas
+- numpy
+
+Steps to run the code: 
+1. Enter the paths to the datasets
+2. Run the main.py file
+3. It will compute all the needed metrics and save it in Results.csv 
+
+Logic for computing the metrics: 
+1. Read the datasets.
+2. Modify the data as needed in order to compute the required metrics.
+3. Check if at least 80% of data samples are present for each day 
+4. Calculate Manual and auto mode metrics for overnight, daytime, and whole day. 
+5. Compute the means and store the results in a csv file.
+
+Notes:
+Project was originally done in Google Colab notebooks and then converted into a python file.
+The .ipynb file is zipped as well.
