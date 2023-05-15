@@ -1,0 +1,15 @@
+Python Library Requirements: 
+- pandas 
+- numpy 
+- scikit-learn 
+- tabulate
+- run 'pip install pandas numpy scikit-learn tabulate'
+
+Steps to run the code: 
+1. Enter the paths to the CGMdata and InsulinData.csv files
+2. Run the main.py file (keep the auxillary files data_extraction.py, feature_extraction.py, metrics.py in the same directory as that of main.py file)
+3. It will compute all the needed metrics and save it in Results.csv 
+
+Notes:
+- Have run the project mainly on python 3.8.16. 
+- Have tested it on python 3.10.6 and python 3.9.12 as well without running into any issues.

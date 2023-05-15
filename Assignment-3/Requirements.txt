@@ -11,5 +11,5 @@ Steps to run the code:
 3. It will compute all the needed metrics and save it in Results.csv 
 
 Notes:
-- Have run the project mainly on python 3.8.15. 
+- Have run the project mainly on python 3.8.16. 
 - Have tested it on python 3.10.6 and python 3.9.12 as well without running into any issues.

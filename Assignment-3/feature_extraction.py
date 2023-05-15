@@ -2,72 +2,96 @@
 import numpy as np
 import pandas as pd
 from data_extraction import *
-from sklearn.metrics.pairwise import euclidean_distances
-from sklearn.preprocessing import MinMaxScaler
-from sklearn.cluster import DBSCAN, KMeans
+from scipy.stats import entropy, iqr
+from scipy.signal import periodogram
 
-# This function takes in meal data and insulin data, calculates meal features, and returns a feature matrix
-def extractMealFeatureMatrix(df_meal, insulin_df):
+# Define a function to extract meal data and create a feature matrix
+def computeMealDataMatrix(cgm_df, meal_df):
     
-    # Initialize an empty list to store meal features
-    meal_input = []  
+    # list to store extracted meal data
+    meal_data_list = []
     
-    # Reset the index of the meal data
-    df_meal.reset_index()  
-
-    # Iterate through the rows of the meal data
-    for index, x in df_meal.iterrows():
-        # Define a time window of 2 hours after the meal and 30 minutes before the meal
-        stop = x['Date_Time'] + pd.DateOffset(hours=2)
-        start = x['Date_Time'] + pd.DateOffset(minutes=-30)
+    # list to store the corresponding carb inputs
+    ground_truth = []
+    
+    for _, row in meal_df.iterrows():
         
-        # Select the insulin data within the time window
-        meal = insulin_df.loc[(insulin_df['Date_Time'] >= start) & (
-            insulin_df['Date_Time'] < stop)]
+        # Define the start time of the meal as 30 minutes before the meal time
+        meal_start = row['Date_Time'] - pd.DateOffset(minutes=30)
         
-        # Set the index to 'Date_Time'
-        meal.set_index('Date_Time', inplace=True)
+        # Define the end time of the meal as 2 hours after the meal time
+        meal_end = row['Date_Time'] + pd.DateOffset(hours=2)
         
-        # Sort the dataframe by 'Date_Time' and reset the index
-        meal = meal.sort_index().reset_index()
-        isCorrect, meal = extractSensorTimeIntervals(
-            meal, 30)  # Check for correct sensor time intervals
-        if isCorrect == False:
+        # Extract the meal data within the meal period
+        meal = cgm_df.loc[(cgm_df['Date_Time'] >= meal_start) & (cgm_df['Date_Time'] < meal_end)]
+        
+        # Remove meal periods with <30 readings
+        if (meal_df.shape[0] < 30):
             continue
+            
+        # Remove missing glucose sensor readings
+        meal = meal[meal['Sensor_Glucose'].notna()]
         
-        # Extract and reshape the 'Sensor Glucose (mg/dL)' values into a row array
-        meal_feature = meal[[
-            'Sensor Glucose (mg/dL)']].to_numpy().reshape(1, 30)
-        
-        # Insert the index at the beginning
-        meal_feature = np.insert(meal_feature, 0, index, axis=1)
-        
-        # Insert the meal value after the index
-        meal_feature = np.insert(meal_feature, 1, x['meal'], axis=1)
-        
-        # Append the meal feature array to the meal input list
-        meal_input.append(meal_feature)
+        # Sort meal data by time
+        meal = meal.set_index('Date_Time').sort_index().reset_index()
 
-    # Return the meal input list as a NumPy array
-    return np.array(meal_input).squeeze()
+        # Remove readings <300 seconds apart
+        mask = (meal['Date_Time'].shift(-1, fill_value=inf) - meal['Date_Time'] \
+                >= dt.timedelta(seconds=300))
+        
+        meal = meal[mask]
 
-# This function takes in input data, computes various statistics, and returns a normalized feature matrix
-def getNormalizedFeatureMatrix(input):
-    data_frame = pd.DataFrame(data=input)
+        # Only include meal_period if it has exactly 30 readings
+        if (meal.shape[0] == 30):
+            meal_data_list.append(meal['Sensor_Glucose'])
+            ground_truth.append(row['Carb_Input'])
+        
+    # Concatenate the meal data and transpose it to get a feature matrix
+    feature_matrix = pd.concat(meal_data_list, axis=1).transpose()
     
-    # Calculate the minimum value of each row
-    df = pd.DataFrame(data=data_frame.min(axis=1), columns=['minimum'])
-    
-    # Calculate the median value of each row
-    df['median'] = data_frame.median(axis=1)
-    df['sum'] = data_frame.sum(axis=1)  # Calculate the sum of each row
-    
-    # Calculate the maximum value of each row
-    df['maximum'] = data_frame.max(axis=1)
-    
-    # Calculate the range (max-min) of each row
-    df['min_max'] = df['maximum']-df['minimum']
-    
-    # Return the normalized feature matrix
-    return MinMaxScaler().fit_transform(df)  
+    # Add the carb input as a label to the feature matrix
+    feature_matrix['label'] = ground_truth 
+    return feature_matrix
 
+
+def computeMealFeatureMatrix(meal_data_matrix):
+    
+    # Exclude ground truth
+    _input = meal_data_matrix.iloc[:, :-1]
+    
+    features = pd.DataFrame()
+    
+    velocity = _input.diff(axis=1).dropna(axis=1, how='all')
+    features['velocity_min'] = velocity.min(axis=1)
+    features['velocity_max'] = velocity.max(axis=1)
+    features['velocity_mean'] = velocity.mean(axis=1)
+
+    acceleration = velocity.diff(axis=1).dropna(axis=1, how='all')
+    features['acceleration_min'] = acceleration.min(axis=1)
+    features['acceleration_max'] = acceleration.max(axis=1)
+    features['acceleration_mean'] = acceleration.mean(axis=1)
+
+    features['entropy'] = _input.apply(lambda row: entropy(row, base=2), axis=1)
+    features['iqr'] = _input.apply(lambda row: entropy(row, base=2), axis=1)
+    
+    fft_values = _input.apply(lambda row: np.fft.fft(row), axis=1)
+
+    # Get the indices of the frequencies sorted by decreasing amplitude
+    fft_indices = fft_values.apply(lambda row: np.argsort(np.abs(row))[::-1])
+
+    # Select the first 6 peaks of each row
+    fft_peaks = fft_indices.apply(lambda row: row[:6])
+    fft_peaks = fft_peaks.apply(pd.Series)
+    fft_peaks.columns = ['fft_max_' + str(i+1) for i in fft_peaks.apply(pd.Series).columns]
+    
+    features = pd.concat([features, fft_peaks], axis=1)
+    
+    _input = meal_data_matrix.iloc[:, :-1]
+    psd = _input.apply(lambda row: periodogram(row)[1], axis=1)
+    psd = psd.apply(lambda row: [np.mean(row[0:5]), np.mean(row[5:10]), np.mean(row[10:16])])
+    psd = psd.apply(pd.Series)
+    psd.columns = ['psd1', 'psd2', 'psd3']
+
+    features = pd.concat([features, psd], axis=1)
+    
+    return features
